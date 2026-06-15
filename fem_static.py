@@ -53,10 +53,9 @@ def K_tangent(du, v, w):
     K_mat = ddot(C(dE_du), dE_dv)
 
     # Geometrical stiffness (3D elements)
-    grad_outer = np.einsum('ki...,kj...->ij...', grad(v), grad(du))
-    K_geo = ddot(S, grad_outer)
-    # Geometrical stiffness (2D elements)
-    # K_geo = np.einsum('ik...,jk...,ij...->...', grad(v), grad(du), S)
+    # grad_outer = np.einsum('ki...,kj...->ij...', grad(v), grad(du))
+    # K_geo = ddot(S, grad_outer)
+    K_geo = np.einsum('ij..., kj..., ki... -> ...', S, grad(v), grad(du))           # OK FOR SYMMETRIC S TENSOR
 
     return K_mat + K_geo
 
@@ -66,7 +65,6 @@ def stiffness(u, v, w):
 
 @LinearForm
 def distributed_load(v, w):
-    x = w.x[0]
     f = np.array([0., 1.0])
     return dot(f, v)
 
@@ -98,16 +96,21 @@ tol_rel = 1e-4
 tol_abs = 1e-6
 u_nlc = basis.zeros()   # Displacement
 
-# Visualization amplitude
+# Visualization amplitude factor
 amp = 1.0
 
 # Excitation force
-F_amps =  np.linspace(1, 1e6, 15)
-F_spatial = distributed_load.assemble(basis)
+F_amps =  np.linspace(0.1, 300, 20) * 1/L
+bottom_facets = m.facets_satisfying(lambda x: np.isclose(x[1], 0.0))
+facet_basis = FacetBasis(m, e, facets=bottom_facets)
+
+F_spatial = distributed_load.assemble(facet_basis)
 
 y_max_nl = []
 y_max_lin = []
 u_nlc = x.copy()
+
+x_center = np.array([[L / 2], [l / 2]])
 
 for F_exc in F_amps:
     F_ext = F_exc * F_spatial
@@ -120,7 +123,7 @@ for F_exc in F_amps:
     # Newton-Raphson iterations
     for it in range(max_iter):
         F_int_vec = f_int.assemble(basis, u_n=u_nlc)
-        R = - (F_ext - F_int_vec) # Residual
+        R = F_ext - F_int_vec # Residual
         res_norm = np.linalg.norm(R[free_dofs])
         ref_norm = np.linalg.norm(F_ext[free_dofs]) + 1e-12
         if res_norm / ref_norm < tol_rel or res_norm < tol_abs:
@@ -134,17 +137,16 @@ for F_exc in F_amps:
         dR_dyn = KT
 
         du = solve(*condense(dR_dyn, R, D=dofs))
-        u_nlc -= 0.1*du
+        u_nlc += du
 
     u_nl = u_nlc
-    deformed_coords = m.p + u_nl[basis.nodal_dofs]
-    y_max = deformed_coords[1, :].max()
-    y_max_nl.append(y_max)
-
     u_lin = solve(*condense(Klin, F_ext, D=dofs))
-    deformed_coords_lin = m.p + u_lin[basis.nodal_dofs]
-    y_max = deformed_coords_lin[1, :].max()
-    y_max_lin.append(y_max)
+
+    unl_center = basis.interpolate(u_nl).at_x(x_center)
+    ulin_center = basis.interpolate(u_lin).at_x(x_center)
+
+    y_max_nl.append(np.abs(unl_center[1][0]))
+    y_max_lin.append(np.abs(ulin_center[1][0]))
 
 if __name__ == "__main__":
     from skfem.visuals.matplotlib import plot, show
@@ -162,16 +164,15 @@ if __name__ == "__main__":
     # ax.figure.savefig('figs/fem_lin_beam.pdf')
 
     # popt, _ = curve_fit(func, y_max_nl, F_amps)
-    popt = np.polyfit(np.array(y_max_nl), F_amps, 3)
-
-    b = np.array(y_max_nl)
-    nl_fit = popt[0]*b**3 + popt[1]*b**2 + popt[2]*b + popt[3]
+    # popt = np.polyfit(np.array(y_max_nl), F_amps, 3)
+    # b = np.array(y_max_nl)
+    # nl_fit = popt[0]*b**3 + popt[1]*b**2 + popt[2]*b + popt[3]
               
     plt.figure()
-    plt.semilogy(y_max_nl, F_amps, color='tab:blue', label='Nonlinear')
-    plt.semilogy(y_max_lin, F_amps, color='tab:blue', label='Linear', linestyle='dashed')
+    plt.plot(y_max_nl, F_amps, color='tab:blue', label='Nonlinear')
+    plt.plot(y_max_lin, F_amps, color='tab:blue', label='Linear', linestyle='dashed')
     # plt.plot(y_max_nl, nl_fit, color='tab:red', label='Polynomial fit')
-    plt.xlabel('Max. displacement')
+    plt.xlabel('Max. displacement [m]')
     plt.ylabel('Restoring force')
     plt.xlim([y_max_nl[0], y_max_nl[-1]])
     plt.legend(frameon=False)

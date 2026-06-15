@@ -71,8 +71,8 @@ def distributed_load(v, w):
 u_curr = basis.zeros()
 
 # Amplification factor for visualization 
-amp = 1 # Amplification factor
-F_amp = 1e3 # Ponctual force
+amp = 10     # Amplification factor for plotting
+F_amp = 15  # Ponctual force
 F_spatial = distributed_load.assemble(basis)
 
 # Matrices assembly
@@ -94,7 +94,6 @@ eigenvals, eigenvecs = eigsh(Kc, k=nmodes, M=Mc, sigma=0.0)
 nat_freqs = np.sqrt(np.real(eigenvals))
 print(f'Eigenvalues: {nat_freqs/2/np.pi} Hz')
 
-exit(1)
 w1, w2  = nat_freqs[0], nat_freqs[1]    # Two first natural freqs [rad/s]
 zeta1, zeta2 = 0.02, 0.02               # Two first damping ratios [-]
 
