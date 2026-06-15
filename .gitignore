@@ -1,0 +1,5 @@
+*.png
+*.pdf
+*.gif
+/figs
+/__pycache__
