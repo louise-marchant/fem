@@ -65,7 +65,7 @@ def stiffness(u, v, w):
 
 @LinearForm
 def distributed_load(v, w):
-    f = np.array([0., 1.0])
+    f = np.array([0., 1.0]) * 1/(L * h)
     return dot(f, v)
 
 def preconditioner_factory(u, f):
@@ -100,7 +100,7 @@ u_nlc = basis.zeros()   # Displacement
 amp = 1.0
 
 # Excitation force
-F_amps =  np.linspace(0.1, 300, 20) * 1/L
+F_amps =  np.linspace(0.1, 10, 10)
 bottom_facets = m.facets_satisfying(lambda x: np.isclose(x[1], 0.0))
 facet_basis = FacetBasis(m, e, facets=bottom_facets)
 
@@ -110,7 +110,7 @@ y_max_nl = []
 y_max_lin = []
 u_nlc = x.copy()
 
-x_center = np.array([[L / 2], [l / 2]])
+x_c = np.array([[L / 2], [l / 2]])
 
 for F_exc in F_amps:
     F_ext = F_exc * F_spatial
@@ -142,11 +142,13 @@ for F_exc in F_amps:
     u_nl = u_nlc
     u_lin = solve(*condense(Klin, F_ext, D=dofs))
 
-    unl_center = basis.interpolate(u_nl).at_x(x_center)
-    ulin_center = basis.interpolate(u_lin).at_x(x_center)
+    unl_interp = basis.interpolator(u_nl)
+    ulin_interp = basis.interpolator(u_lin)
+    unl_c = unl_interp(x_c)[1, 0]       # Compute displacement in y direction at middle of the beam
+    ulin_c = ulin_interp(x_c)[1, 0]
 
-    y_max_nl.append(np.abs(unl_center[1][0]))
-    y_max_lin.append(np.abs(ulin_center[1][0]))
+    y_max_nl.append(unl_c)
+    y_max_lin.append(ulin_c)
 
 if __name__ == "__main__":
     from skfem.visuals.matplotlib import plot, show
@@ -171,10 +173,11 @@ if __name__ == "__main__":
     plt.figure()
     plt.plot(y_max_nl, F_amps, color='tab:blue', label='Nonlinear')
     plt.plot(y_max_lin, F_amps, color='tab:blue', label='Linear', linestyle='dashed')
+    # plt.plot(((F_amps/L)*L**4)/(384*E*Iy), F_amps, color='tab:cyan', label="Beam theory")
     # plt.plot(y_max_nl, nl_fit, color='tab:red', label='Polynomial fit')
     plt.xlabel('Max. displacement [m]')
-    plt.ylabel('Restoring force')
-    plt.xlim([y_max_nl[0], y_max_nl[-1]])
+    plt.ylabel('Restoring force [N]')
+    # plt.xlim([y_max_nl[0], y_max_nl[-1]])
     plt.legend(frameon=False)
     # plt.savefig('figs/deformations.pdf')
 
