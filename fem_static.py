@@ -7,6 +7,7 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit, root
 from scipy.sparse.linalg import LinearOperator, splu
+from load_NX_data import load_NX_file
 
 def func(x, a, b):
     return a*x + b*x**3
@@ -55,7 +56,7 @@ def K_tangent(du, v, w):
     # Geometrical stiffness (3D elements)
     # grad_outer = np.einsum('ki...,kj...->ij...', grad(v), grad(du))
     # K_geo = ddot(S, grad_outer)
-    K_geo = np.einsum('ij..., kj..., ki... -> ...', S, grad(v), grad(du))           # OK FOR SYMMETRIC S TENSOR
+    K_geo = np.einsum('ij..., kj..., ki... -> ...', S, grad(v), grad(du))
 
     return K_mat + K_geo
 
@@ -100,7 +101,7 @@ u_nlc = basis.zeros()   # Displacement
 amp = 1.0
 
 # Excitation force
-F_amps =  np.linspace(0.1, 10, 10)
+F_amps =  np.linspace(0.5, 10, 20)
 bottom_facets = m.facets_satisfying(lambda x: np.isclose(x[1], 0.0))
 facet_basis = FacetBasis(m, e, facets=bottom_facets)
 
@@ -129,7 +130,7 @@ for F_exc in F_amps:
         if res_norm / ref_norm < tol_rel or res_norm < tol_abs:
             break
         
-        if it % 100 == 0:
+        if it % 1 == 0:
             print(f'Excitation force {F_exc}')
             print(f"Rel. residual {res_norm / ref_norm} and abs. residual {res_norm} at iteration : {it} (={it/max_iter*100} %)")
 
@@ -147,22 +148,23 @@ for F_exc in F_amps:
     unl_c = unl_interp(x_c)[1, 0]       # Compute displacement in y direction at middle of the beam
     ulin_c = ulin_interp(x_c)[1, 0]
 
-    y_max_nl.append(unl_c)
-    y_max_lin.append(ulin_c)
+    y_max_nl.append(unl_c*1000)         # [mm] scaling
+    y_max_lin.append(ulin_c*1000)       # [mm] scaling
 
 if __name__ == "__main__":
     from skfem.visuals.matplotlib import plot, show
 
-    M = MeshQuad(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
+    # M = MeshQuad(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
+    M = MeshTri(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
     ax1 = draw(M)
     plot(M, u_nl[basis.nodal_dofs[1]], ax=ax1)
     ax1.set_aspect('auto')
     # ax1.figure.savefig('figs/fem_nonlin_beam.pdf')
 
-    M = MeshQuad(np.array(m.p + amp * u_lin[basis.nodal_dofs]), m.t)
-    ax = draw(M)
-    plot(M, u_lin[basis.nodal_dofs[1]], ax=ax)
-    ax.set_aspect('auto')
+    # M = MeshQuad(np.array(m.p + amp * u_lin[basis.nodal_dofs]), m.t)
+    # ax = draw(M)
+    # plot(M, u_lin[basis.nodal_dofs[1]], ax=ax)
+    # ax.set_aspect('auto')
     # ax.figure.savefig('figs/fem_lin_beam.pdf')
 
     # popt, _ = curve_fit(func, y_max_nl, F_amps)
@@ -175,10 +177,21 @@ if __name__ == "__main__":
     plt.plot(y_max_lin, F_amps, color='tab:blue', label='Linear', linestyle='dashed')
     # plt.plot(((F_amps/L)*L**4)/(384*E*Iy), F_amps, color='tab:cyan', label="Beam theory")
     # plt.plot(y_max_nl, nl_fit, color='tab:red', label='Polynomial fit')
-    plt.xlabel('Max. displacement [m]')
+    plt.xlabel('Max. displacement [mm]')
     plt.ylabel('Restoring force [N]')
     # plt.xlim([y_max_nl[0], y_max_nl[-1]])
     plt.legend(frameon=False)
     # plt.savefig('figs/deformations.pdf')
+
+    iter_num = np.linspace(1, len(F_amps), len(F_amps))
+    iter_num_nx, y_max_nl_nx = load_NX_file("NX_data/max_disp_10N.csv")
+    plt.figure()
+    plt.plot(iter_num, y_max_nl, color='tab:blue', label='Nonlinear', linewidth=2)
+    plt.plot(iter_num, y_max_lin, color='tab:blue', label='Linear', linestyle='dashed', linewidth=2)
+    plt.plot(iter_num_nx, y_max_nl_nx, color='tab:orange', label="Nonlinear (NX)", linestyle='-.', linewidth=2)
+    plt.xlabel('Iteration number')
+    plt.ylabel('Max. displacement [mm]')
+    plt.legend(frameon=False)
+    plt.xlim([iter_num[0], iter_num[-1]])
 
     plt.show()
