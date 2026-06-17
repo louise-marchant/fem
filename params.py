@@ -18,10 +18,10 @@ Iy = h * l**3 / 12
 """Plain stress assumption - Timoschenko Bar"""
 m1 = np.linspace(0, L, 350)
 m2 = np.linspace(0, l, 5)
-# m = MeshQuad.init_tensor(m1, m2).with_defaults()
-m = MeshTri.init_tensor(m1, m2).with_defaults()
+m = MeshQuad.init_tensor(m1, m2).with_defaults()
+# m = MeshTri.init_tensor(m1, m2).with_defaults()
 
-# e1 = ElementQuad2() # ElementQuad1()
-e1 = ElementTriP2()
+e1 = ElementQuad2() # ElementQuad1()
+# e1 = ElementTriP2()
 e = ElementVector(e1)
 basis = Basis(m, e, intorder=2)   # basis = Basis(m, e, intorder=2)

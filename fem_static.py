@@ -79,10 +79,14 @@ def preconditioner_factory(u, f):
     # Return as a LinearOperator for the Krylov solver
     return J    # LinearOperator(J.shape, matvec=ilu.solve)
 
-def residual(u, f_ext):
+def residual(uc, f_ext, free_dofs):
+    u = np.zeros_like(x)    # Full sol vector
+    u[free_dofs] = uc       # Full sol vector where constraints dofs are null
     Ku = f_int.assemble(basis, u_n=u)
-    return (Ku - f_ext)
+    R = Ku - f_ext
+    return R[free_dofs]
 
+# Linear stiffness matrix assembly
 Klin = stiffness.assemble(basis)
 
 # Boundary conditions - clamped-clamped beam
@@ -92,57 +96,76 @@ free_dofs = basis.complement_dofs(dofs)
 x = basis.zeros()
 
 # Newton-Raphson parameters
-max_iter = int(1e4)
-tol_rel = 1e-4
-tol_abs = 1e-6
+max_iter = int(1e3)
+rtol = 1e-5
+atol = 1e-8
 u_nlc = basis.zeros()   # Displacement
 
-# Visualization amplitude factor
-amp = 1.0
-
 # Excitation force
-F_amps =  np.linspace(0.5, 10, 20)
+f_amps =  np.linspace(0.5, 10, 20)
 bottom_facets = m.facets_satisfying(lambda x: np.isclose(x[1], 0.0))
 facet_basis = FacetBasis(m, e, facets=bottom_facets)
 
-F_spatial = distributed_load.assemble(facet_basis)
+f_spatial = distributed_load.assemble(facet_basis)
 
 y_max_nl = []
 y_max_lin = []
-u_nlc = x.copy()
-
 x_c = np.array([[L / 2], [l / 2]])
 
-for F_exc in F_amps:
-    F_ext = F_exc * F_spatial
+for i, f_exc in enumerate(f_amps):
+    print(f'F = {f_exc} N, it. number {i+1}/{len(f_amps)}')
+    f_ext = f_exc * f_spatial
     
-    # u_lin = solve(*condense(Klin, F_ext, D=dofs))
-    # u_nlc = u_lin
-    # for _ in range(5):
-    #     u_nlc = root(residual, u_nlc, args=(F_ext,), jac=preconditioner_factory, method='hybr', options={'disp': True}).x
+    u_lin = solve(*condense(Klin, f_ext, D=dofs))
+    KT = K_tangent.assemble(basis, u_n=u_nlc)
     
-    # Newton-Raphson iterations
     for it in range(max_iter):
         F_int_vec = f_int.assemble(basis, u_n=u_nlc)
-        R = F_ext - F_int_vec # Residual
+        R = f_ext - F_int_vec
+        
         res_norm = np.linalg.norm(R[free_dofs])
-        ref_norm = np.linalg.norm(F_ext[free_dofs]) + 1e-12
-        if res_norm / ref_norm < tol_rel or res_norm < tol_abs:
+        ref_norm = np.linalg.norm(f_ext[free_dofs])
+
+        if res_norm < (atol + rtol * ref_norm):
+            print(f"    Converged in {it} iter with a rel. residual {res_norm / ref_norm:.2e}")
             break
         
-        if it % 1 == 0:
-            print(f'Excitation force {F_exc}')
-            print(f"Rel. residual {res_norm / ref_norm} and abs. residual {res_norm} at iteration : {it} (={it/max_iter*100} %)")
+        # For classical Newton-Raphason iterations, new computations of derivative of residual KT at each step (uncomment line)
+        # For modified Newton-Raphson iterations, computation of derivative of residual KT only at new forcing steps (faster, but less robust if next line is commented)
+        # KT = K_tangent.assemble(basis, u_n=u_nlc)
+        
+        du_condensed = solve(*condense(KT, R, D=dofs))[free_dofs]
+        
+        # Line search
+        alpha = 1.0
+        alpha_ref = 1.0
+        min_res = res_norm
 
-        KT = K_tangent.assemble(basis, u_n=u_nlc)
-        dR_dyn = KT
+        while alpha > 0.05:
+            u_it = u_nlc.copy()
+            u_it[free_dofs] += alpha * du_condensed
 
-        du = solve(*condense(dR_dyn, R, D=dofs))
-        u_nlc += du
+            R_it = f_ext - f_int.assemble(basis, u_n=u_it)
+            res_it = np.linalg.norm(R_it[free_dofs])
+            
+            if res_it < res_norm:
+                alpha_ref = alpha
+                break
+                
+            if res_it < min_res:
+                min_res = res_it
+                alpha_ref = alpha
+            alpha *= 0.5
 
-    u_nl = u_nlc
-    u_lin = solve(*condense(Klin, F_ext, D=dofs))
+        if alpha_ref != 1.0:
+            print(f"   [Line search] Damped step at alpha = {alpha_ref} (Residual: {res_norm:.2e} -> {min_res:.2e})")
+        u_nlc[free_dofs] += alpha_ref * du_condensed
+        
+    else:
+        print(f"Convergence issue at F = {f_exc} after {max_iter} iterations")
+        u_nlc[free_dofs] = u_lin[free_dofs]
 
+    u_nl = u_nlc.copy()
     unl_interp = basis.interpolator(u_nl)
     ulin_interp = basis.interpolator(u_lin)
     unl_c = unl_interp(x_c)[1, 0]       # Compute displacement in y direction at middle of the beam
@@ -154,8 +177,11 @@ for F_exc in F_amps:
 if __name__ == "__main__":
     from skfem.visuals.matplotlib import plot, show
 
-    # M = MeshQuad(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
-    M = MeshTri(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
+    # Visualization amplitude factor
+    amp = 1.0
+
+    M = MeshQuad(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
+    # M = MeshTri(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
     ax1 = draw(M)
     plot(M, u_nl[basis.nodal_dofs[1]], ax=ax1)
     ax1.set_aspect('auto')
@@ -167,31 +193,22 @@ if __name__ == "__main__":
     # ax.set_aspect('auto')
     # ax.figure.savefig('figs/fem_lin_beam.pdf')
 
-    # popt, _ = curve_fit(func, y_max_nl, F_amps)
-    # popt = np.polyfit(np.array(y_max_nl), F_amps, 3)
-    # b = np.array(y_max_nl)
-    # nl_fit = popt[0]*b**3 + popt[1]*b**2 + popt[2]*b + popt[3]
-              
-    plt.figure()
-    plt.plot(y_max_nl, F_amps, color='tab:blue', label='Nonlinear')
-    plt.plot(y_max_lin, F_amps, color='tab:blue', label='Linear', linestyle='dashed')
-    # plt.plot(((F_amps/L)*L**4)/(384*E*Iy), F_amps, color='tab:cyan', label="Beam theory")
-    # plt.plot(y_max_nl, nl_fit, color='tab:red', label='Polynomial fit')
-    plt.xlabel('Max. displacement [mm]')
-    plt.ylabel('Restoring force [N]')
-    # plt.xlim([y_max_nl[0], y_max_nl[-1]])
-    plt.legend(frameon=False)
-    # plt.savefig('figs/deformations.pdf')
+    # popt, _ = curve_fit(func, y_max_nl, f_amps)
+    popt = np.polyfit(np.array(y_max_nl), f_amps, 3)
+    b = np.array(y_max_nl)
+    nl_fit = popt[0]*b**3 + popt[1]*b**2 + popt[2]*b + popt[3]
+    print(f'Polynomial fit: {popt[0]}*b**3 + {popt[1]}*b**2 + {popt[2]}*b + {popt[3]}')
 
-    iter_num = np.linspace(1, len(F_amps), len(F_amps))
+    iter_num = np.linspace(1, len(f_amps), len(f_amps))
     iter_num_nx, y_max_nl_nx = load_NX_file("NX_data/max_disp_10N.csv")
     plt.figure()
-    plt.plot(iter_num, y_max_nl, color='tab:blue', label='Nonlinear', linewidth=2)
-    plt.plot(iter_num, y_max_lin, color='tab:blue', label='Linear', linestyle='dashed', linewidth=2)
-    plt.plot(iter_num_nx, y_max_nl_nx, color='tab:orange', label="Nonlinear (NX)", linestyle='-.', linewidth=2)
-    plt.xlabel('Iteration number')
-    plt.ylabel('Max. displacement [mm]')
+    plt.plot(y_max_nl, f_amps, color='tab:blue', label='Nonlinear', linewidth=2)
+    plt.plot(y_max_lin, f_amps, color='tab:blue', label='Linear', linestyle='dashed', linewidth=2)
+    plt.plot(y_max_nl_nx, f_amps, color='tab:orange', label="Nonlinear (NX)", linestyle='-.', linewidth=2)
+    plt.plot(y_max_nl, nl_fit, color='tab:red', label="Polynomial fit", linestyle=':', linewidth=2)
+    plt.xlabel('Max. displacement [mm]')
+    plt.ylabel('Forcing amplitude [N]')
     plt.legend(frameon=False)
-    plt.xlim([iter_num[0], iter_num[-1]])
+    plt.xlim([np.maximum(y_max_nl[0], y_max_lin[0]), np.minimum(y_max_nl[-1], y_max_lin[-1])])
 
     plt.show()
