@@ -38,24 +38,14 @@ def f_int(v, w):
 def K_tangent(du, v, w):
     u_n = w['u_n']
     S = S_PK(u_n)
-
+    
     # Variation of E in direction du
-    dE_du = sym_grad(du) + 0.5 * (
-        dot(transpose(grad(u_n)), grad(du)) +
-        dot(transpose(grad(du)),  grad(u_n))
-    )
+    dE_du = sym_grad(du) + 0.5 * (dot(transpose(grad(u_n)), grad(du)) + dot(transpose(grad(du)), grad(u_n)))
     # Variation of E in direction v (virtual)
-    dE_dv = sym_grad(v) + 0.5 * (
-        dot(transpose(grad(u_n)), grad(v)) +
-        dot(transpose(grad(v)),   grad(u_n))
-    )
-
+    dE_dv = sym_grad(v) + 0.5 * (dot(transpose(grad(u_n)), grad(v)) + dot(transpose(grad(v)), grad(u_n)))
     # Material stiffness
     K_mat = ddot(C(dE_du), dE_dv)
-
     # Geometrical stiffness (3D elements)
-    # grad_outer = np.einsum('ki...,kj...->ij...', grad(v), grad(du))
-    # K_geo = ddot(S, grad_outer)
     K_geo = np.einsum('ij..., kj..., ki... -> ...', S, grad(v), grad(du))
 
     return K_mat + K_geo
@@ -68,16 +58,6 @@ def stiffness(u, v, w):
 def distributed_load(v, w):
     f = np.array([0., 1.0]) * 1/(L * h)
     return dot(f, v)
-
-def preconditioner_factory(u, f):
-    # Calculate the exact Jacobian at the current step
-    J = K_tangent.assemble(basis, u_n=u)
-    
-    # Incomplete LU factorization of the exact Jacobian
-    #ilu = splu(J.tocsc())#, drop_tol=1e-3)
-    
-    # Return as a LinearOperator for the Krylov solver
-    return J    # LinearOperator(J.shape, matvec=ilu.solve)
 
 def residual(uc, f_ext, free_dofs):
     u = np.zeros_like(x)    # Full sol vector
@@ -205,10 +185,14 @@ if __name__ == "__main__":
     plt.plot(y_max_nl, f_amps, color='tab:blue', label='Nonlinear', linewidth=2)
     plt.plot(y_max_lin, f_amps, color='tab:blue', label='Linear', linestyle='dashed', linewidth=2)
     plt.plot(y_max_nl_nx, f_amps, color='tab:orange', label="Nonlinear (NX)", linestyle='-.', linewidth=2)
-    plt.plot(y_max_nl, nl_fit, color='tab:red', label="Polynomial fit", linestyle=':', linewidth=2)
+    # plt.plot(y_max_nl, nl_fit, color='tab:red', label="Polynomial fit", linestyle=':', linewidth=2)
     plt.xlabel('Max. displacement [mm]')
     plt.ylabel('Forcing amplitude [N]')
     plt.legend(frameon=False)
     plt.xlim([np.maximum(y_max_nl[0], y_max_lin[0]), np.minimum(y_max_nl[-1], y_max_lin[-1])])
 
+    plt.figure()
+    plt.plot(f_amps, (np.abs(y_max_nl-y_max_nl_nx)/y_max_nl_nx)*100, color='tab:blue', linewidth=2)
+    plt.ylabel('Error [%]')
+    plt.xlabel('Forcing amplitude [N]')
     plt.show()
