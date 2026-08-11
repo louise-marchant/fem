@@ -162,9 +162,9 @@ if __name__ == "__main__":
 
     M = MeshQuad(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
     # M = MeshTri(np.array(m.p + amp * u_nl[basis.nodal_dofs]), m.t)
-    ax1 = draw(M)
-    plot(M, u_nl[basis.nodal_dofs[1]], ax=ax1)
-    ax1.set_aspect('auto')
+    # ax1 = draw(M)
+    # plot(M, u_nl[basis.nodal_dofs[1]], ax=ax1)
+    # ax1.set_aspect('auto')
     # ax1.figure.savefig('figs/fem_nonlin_beam.pdf')
 
     # M = MeshQuad(np.array(m.p + amp * u_lin[basis.nodal_dofs]), m.t)
