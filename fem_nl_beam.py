@@ -19,32 +19,80 @@ def E_GL(u):
 def S_PK(u):
     return C(E_GL(u))
 
+def compute_vars(u_vec, basis):
+    u_n = basis.interpolate(u_vec)
+    u_n_grad = grad(u_n)
+    u_n_grad_T = transpose(u_n_grad)
+    sym_grad_u_n = 0.5 * (u_n_grad + u_n_grad_T)
+
+    E = sym_grad_u_n + 0.5 * dot(u_n_grad, u_n_grad_T)
+    S = C(E)
+
+    return u_n_grad, u_n_grad_T, sym_grad_u_n, E, S
+
 # Internal force - Evaluated at state u_prev (v is the test function)
+# @LinearForm
+# def f_int(v, w):
+#     u_n = w['u_n']
+#     S = S_PK(u_n)
+#     # Variation of E in direction v, with u_n fixed
+#     # Linear term + large displacement term
+#     dE_v = sym_grad(v) + 0.5 * ( dot(transpose(grad(u_n)), grad(v)) + dot(transpose(grad(v)), grad(u_n)))
+#     return ddot(S, dE_v)
 @LinearForm
 def f_int(v, w):
-    u_n = w['u_n']
-    S = S_PK(u_n)
+    S, u_n_grad, u_n_grad_T = w['S'], w['u_n_grad'], w['u_n_grad_T']
+    v_grad = grad(v)
+    v_grad_T = transpose(v_grad)
+    sym_grad_v = 0.5 * (v_grad + v_grad_T)
+
     # Variation of E in direction v, with u_n fixed
     # Linear term + large displacement term
-    dE_v = sym_grad(v) + 0.5 * ( dot(transpose(grad(u_n)), grad(v)) + dot(transpose(grad(v)), grad(u_n)))
+    dE_v = sym_grad_v + 0.5 * ( dot(u_n_grad_T, v_grad) + dot(v_grad_T, u_n_grad))
     return ddot(S, dE_v)
 
+
 # Tangential matrix (derivative of f_int) — BilinearForm (K_mat + K_geo)
+# @BilinearForm
+# def K_tangent(du, v, w):
+#     u_n = w['u_n']
+#     S = S_PK(u_n)
+    
+#     # Variation of E in direction du
+#     dE_du = sym_grad(du) + 0.5 * (dot(transpose(grad(u_n)), grad(du)) + dot(transpose(grad(du)), grad(u_n)))
+#     # Variation of E in direction v (virtual)
+#     dE_dv = sym_grad(v) + 0.5 * (dot(transpose(grad(u_n)), grad(v)) + dot(transpose(grad(v)), grad(u_n)))
+
+#     # Material stiffness
+#     K_mat = ddot(C(dE_du), dE_dv)
+#     # Geometrical stiffness (3D elements)
+#     K_geo = np.einsum('ij..., kj..., ki... -> ...', S, grad(v), grad(du))
+
+#     return K_mat + K_geo
 @BilinearForm
 def K_tangent(du, v, w):
-    u_n = w['u_n']
-    S = S_PK(u_n)
+    S, u_n_grad, u_n_grad_T = w['S'], w['u_n_grad'], w['u_n_grad_T']
+
+    du_grad = grad(du)
+    du_grad_T = transpose(du_grad)
+    sym_grad_du = 0.5 * (du_grad + du_grad_T)
+
+    v_grad = grad(v)
+    v_grad_T = transpose(v_grad)
+    sym_grad_v = 0.5 * (v_grad + v_grad_T)
     
     # Variation of E in direction du
-    dE_du = sym_grad(du) + 0.5 * (dot(transpose(grad(u_n)), grad(du)) + dot(transpose(grad(du)), grad(u_n)))
+    dE_du = sym_grad_du + 0.5 * (dot(u_n_grad_T, du_grad) + dot(du_grad_T, u_n_grad))
     # Variation of E in direction v (virtual)
-    dE_dv = sym_grad(v) + 0.5 * (dot(transpose(grad(u_n)), grad(v)) + dot(transpose(grad(v)), grad(u_n)))
+    dE_dv = sym_grad_v + 0.5 * (dot(u_n_grad_T, v_grad) + dot(v_grad_T, u_n_grad))
+
     # Material stiffness
     K_mat = ddot(C(dE_du), dE_dv)
     # Geometrical stiffness (3D elements)
-    K_geo = np.einsum('ij..., kj..., ki... -> ...', S, grad(v), grad(du))
+    K_geo = np.einsum('ij..., kj..., ki... -> ...', S, v_grad, du_grad)
 
     return K_mat + K_geo
+
 
 @BilinearForm
 def stiffness(u, v, w):
@@ -62,22 +110,32 @@ def distributed_load(v, w):
 
 u_curr = basis.zeros()
 
-# Amplification factor for visualization 
-F_amp = 20 # Ponctual force
-F_spatial = np.zeros(basis.N)
-F_node = np.where((np.isclose(m.p[0], L/2, rtol=0.05)) & (np.isclose(m.p[1], 0.0)))[0][0]
-F_spatial[basis.nodal_dofs[1, F_node]] += 1
+# Forcing shape
+F_amp = 5.0 # Forcing amplitude
 # F_spatial = distributed_load.assemble(basis)
+
+# Sine forcing
+# T = 20            # Sine period [s]
+# NFT = 64          # Temporal discretization
+# t_it = np.linspace(0, T, NFT)   # Time step size [s]
+# dt = T / NFT
+# F = lambda t : F_amp * F_spatial * np.sin((2*np.pi / T) * t)
+
+# Forcing shape - Sine-sweep forcing
+w_rate = 0.1 # (rad/s)/s
+w_i = 145; w_e = 145.20
+t_max = abs(w_e - w_i) / w_rate
+dt = 1 / (15 * (w_e / (2*np.pi)))
+t_it = np.arange(0, t_max+dt, dt)
+Ft = lambda t : F_amp * np.sin(w_i*t + w_rate*t**2 / 2)
+F = lambda t : F_spatial * Ft(t)
+
 
 # Matrices assembly
 Klin = stiffness.assemble(basis)
 M = mass.assemble(basis)
 
-# Boundary conditions - clamped-clamped beam
-D = m.boundary_nodes()
-dofs = basis.get_dofs(lambda x: (x[0] == 0.) | (x[0] == L))
-free_dofs = basis.complement_dofs(dofs)
-
+# Deleting constrained dofs
 Kc = Klin[free_dofs, :][:, free_dofs]  # Constrained stiffness
 Mc = M[free_dofs, :][:, free_dofs]  # Constrained mass
 
@@ -97,10 +155,6 @@ br = 2 * (zeta2 * w2 - zeta1 * w1) / (w2**2 - w1**2)
 Cd = ar * M + br * Klin
 
 # Dynamic Integration Parameters (Newmark-beta)
-T = 20            # Sine period [s]
-NFT = 64          # Temporal discretization
-t_it = np.linspace(1, NFT, NFT)   # Time step size [s]
-dt = T / NFT
 beta = 0.25
 gamma = 0.5
 
@@ -116,22 +170,27 @@ tol = 1e-10
 # Time loop
 u_history = []
 KT = K_tangent.assemble(basis, u_n=u_curr)
+i = 0
+
 for t in t_it:
-   
+    if i % 100 == 0:
+        print(f"Iteration at time {t} over {t_it[-1]} (={t/t_it[-1]*100} %)")
+    i+=1 
+
     u_old = u.copy()
     v_old = v.copy()
     a_old = a.copy()
 
     # Calculate harmonic time-dependent force
-    F_ext = F_amp * F_spatial * np.sin((2*np.pi / T ) * t*T / NFT)
+    F_ext = F(t)
     
     # Newton-Raphson iteration loop for implicit step
     u_curr = u_old.copy() # Initial guess
 
     for it in range(max_iter):
-        print(f"Iteration: {it} at time {t*T/NFT} over {T} (={t/NFT*100} %)")
-        if it >= 5:
+        if it % 5 == 0:
             KT = K_tangent.assemble(basis, u_n=u_curr)
+        #print(it)
 
         # Compute acceleration based on current displacement guess
         a_curr = (u_curr - u_old) / (beta * dt**2) - v_old / (beta * dt) - (1.0 / (2.0 * beta) - 1.0) * a_old
@@ -156,12 +215,11 @@ for t in t_it:
     v = v_old + (1.0 - gamma) * dt * a_old + gamma * dt * a
     u_history.append(u.copy())
 
-# print('Linear stiffness ', Klin @ u)
-# print(f'Eigenvalues: {nat_freqs/2/np.pi} Hz')
+u_history = np.array(u_history)
 
 if __name__ == "__main__":
     from skfem.visuals.matplotlib import plot, show
-    amp = 5     # Amplification factor for plotting
+    amp = 1  # Amplification factor for plotting
 
     deformed_coords = m.p + amp * u[basis.nodal_dofs]
     y_min, y_max = deformed_coords[1, :].min(), deformed_coords[1, :].max()
@@ -176,12 +234,22 @@ if __name__ == "__main__":
     # ax1.set_aspect('auto')
 
     plt.figure()
-    plt.plot(t_it * T / NFT, F_amp * np.sin((2*np.pi/T) * t_it * T / NFT))
-    plt.xlim([t_it[0] * T / NFT, t_it[-1] * T / NFT])
+    plt.plot(t_it, Ft(t_it))
+    plt.xlim([t_it[0], t_it[-1]])
     plt.xlabel('Time (s)')
     plt.ylabel('Max displacement (m)')  
     # plt.savefig('figs/temporal_deformation.pdf')
 
+    plt.figure()
+    plt.plot(t_it, w_i + w_rate*t_it)
+    plt.xlim([t_it[0], t_it[-1]])
+    plt.xlabel('Time (s)')
+    plt.ylabel('Excitation frequency (rad/s)')
+
+    plt.figure()
+    plt.plot(w_i + w_rate*t_it, u_history[:,basis.nodal_dofs[1, F_node]])
+    plt.xlabel('Frequency (rad/s)')
+    plt.ylabel('Amplitude (m)')
 
     fig, ax = plt.subplots(figsize=(9,5))
     disp_values = np.abs(np.concatenate([u_t[basis.nodal_dofs[1]] for u_t in u_history]))
@@ -203,10 +271,10 @@ if __name__ == "__main__":
         ax.set_ylim(-0.002, 0.005)  # y_min - margin_y, y_max + margin_y)
         ax.set_title(f"Time : {frame * dt:.3f} s (amp x{amp})")
 
-    anim = FuncAnimation(fig, update, frames=len(u_history), interval=50)
+    anim = FuncAnimation(fig, update, frames=len(u_history), interval=10)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    fig.colorbar(sm, ax=ax, label='|u_y|')
-    anim.save('figs/beam_deformation.gif', writer='pillow', fps=10)
+    fig.colorbar(sm, ax=ax, label=r'$|u_z|$')
+    # anim.save('figs/beam_deformation.gif', writer='pillow', fps=10)
 
     show()
