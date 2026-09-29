@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numba
-from scipy.sparse.linalg import eigsh
+from scipy.sparse.linalg import eigsh, splu
 
 def C(T):
     return 2. * mu * T + lam * eye(trace(T), T.shape[0])
@@ -28,7 +28,7 @@ def compute_vars(u_vec, basis):
     E = sym_grad_u_n + 0.5 * dot(u_n_grad, u_n_grad_T)
     S = C(E)
 
-    return u_n_grad, u_n_grad_T, sym_grad_u_n, E, S
+    return u_n_grad, u_n_grad_T, S
 
 # Internal force - Evaluated at state u_prev (v is the test function)
 # @LinearForm
@@ -122,8 +122,8 @@ F_amp = 5.0 # Forcing amplitude
 # F = lambda t : F_amp * F_spatial * np.sin((2*np.pi / T) * t)
 
 # Forcing shape - Sine-sweep forcing
-w_rate = 0.1 # (rad/s)/s
-w_i = 145; w_e = 145.20
+w_rate = 0.5 # (rad/s)/s
+w_i = 145; w_e = 155
 t_max = abs(w_e - w_i) / w_rate
 dt = 1 / (15 * (w_e / (2*np.pi)))
 t_it = np.arange(0, t_max+dt, dt)
@@ -169,11 +169,13 @@ tol = 1e-10
 
 # Time loop
 u_history = []
-KT = K_tangent.assemble(basis, u_n=u_curr)
-i = 0
+u_n_grad, u_n_grad_T, S = compute_vars(u_curr, basis)
+KT = K_tangent.assemble(basis, u_n_grad=u_n_grad, u_n_grad_T=u_n_grad_T, S=S)
+dR_dyn = (1.0 / (beta*dt**2)) * M + (gamma / (beta*dt)) * Cd + KT
 
+i=0
 for t in t_it:
-    if i % 100 == 0:
+    if i % 50 == 0:
         print(f"Iteration at time {t} over {t_it[-1]} (={t/t_it[-1]*100} %)")
     i+=1 
 
@@ -188,27 +190,34 @@ for t in t_it:
     u_curr = u_old.copy() # Initial guess
 
     for it in range(max_iter):
+
         if it % 5 == 0:
-            KT = K_tangent.assemble(basis, u_n=u_curr)
-        #print(it)
+            KT = K_tangent.assemble(basis, u_n_grad=u_n_grad, u_n_grad_T=u_n_grad_T, S=S)
+
+            dR_dyn = (1.0 / (beta*dt**2)) * M + (gamma / (beta*dt)) * Cd + KT
+            dR_dyn_c = dR_dyn[free_dofs, :][:, free_dofs].tocsc()
+            lu = splu(dR_dyn_c)
 
         # Compute acceleration based on current displacement guess
         a_curr = (u_curr - u_old) / (beta * dt**2) - v_old / (beta * dt) - (1.0 / (2.0 * beta) - 1.0) * a_old
         v_curr = v_old + (1.0 - gamma) * dt * a_old + gamma * dt * a_curr
 
-        F_int_vec = f_int.assemble(basis, u_n=u_curr)
+        F_int_vec = f_int.assemble(basis, u_n_grad=u_n_grad, u_n_grad_T=u_n_grad_T, S=S)
         R = (F_ext - M @ a_curr - Cd @ v_curr - F_int_vec) # Residual
         res_norm = np.linalg.norm(R[free_dofs])
         ref_norm = np.linalg.norm(F_ext[free_dofs]) + 1e-12
         if res_norm / ref_norm < tol:
             break
-
-        dR_dyn = (1.0 / (beta*dt**2)) * M + (gamma / (beta*dt)) * Cd + KT
         
-        du = solve(*condense(dR_dyn, R, D=dofs))
+        # du = solve(*condense(dR_dyn, R, D=dofs))
+        du_free = lu.solve(R[free_dofs])
+        du = np.zeros_like(u_curr)
+        du[free_dofs] = du_free
         if np.linalg.norm(du) < tol:
             break
+
         u_curr += du
+        u_n_grad, u_n_grad_T, S = compute_vars(u_curr, basis)
         
     u = u_curr
     a = (u - u_old) / (beta * dt**2) - v_old / (beta * dt) - (1.0 / (2.0 * beta) - 1.0) * a_old
@@ -237,7 +246,7 @@ if __name__ == "__main__":
     plt.plot(t_it, Ft(t_it))
     plt.xlim([t_it[0], t_it[-1]])
     plt.xlabel('Time (s)')
-    plt.ylabel('Max displacement (m)')  
+    plt.ylabel('Excitation force')  
     # plt.savefig('figs/temporal_deformation.pdf')
 
     plt.figure()
@@ -249,7 +258,7 @@ if __name__ == "__main__":
     plt.figure()
     plt.plot(w_i + w_rate*t_it, u_history[:,basis.nodal_dofs[1, F_node]])
     plt.xlabel('Frequency (rad/s)')
-    plt.ylabel('Amplitude (m)')
+    plt.ylabel('Displacement (m)')
 
     fig, ax = plt.subplots(figsize=(9,5))
     disp_values = np.abs(np.concatenate([u_t[basis.nodal_dofs[1]] for u_t in u_history]))

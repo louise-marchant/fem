@@ -4,7 +4,10 @@ from skfem.helpers import dot, ddot, grad, sym_grad, eye, trace, transpose
 from skfem.visuals.matplotlib import plot, draw
 import numpy as np
 from matplotlib.animation import FuncAnimation
+import os
+os.environ['XDG_SESSION_TYPE'] = 'gnome'
 import matplotlib.pyplot as plt
+import matplotlib
 from scipy.optimize import curve_fit, root
 from scipy.sparse.linalg import LinearOperator, splu
 from load_NX_data import load_NX_file
@@ -82,7 +85,7 @@ atol = 1e-8
 u_nlc = basis.zeros()   # Displacement
 
 # Excitation force
-f_amps =  np.linspace(0.5, 10, 20)
+f_amps =  np.linspace(0.5, 5, 20)
 bottom_facets = m.facets_satisfying(lambda x: np.isclose(x[1], 0.0))
 facet_basis = FacetBasis(m, e, facets=bottom_facets)
 
